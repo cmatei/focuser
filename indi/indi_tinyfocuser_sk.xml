@@ -1,0 +1,30 @@
+<INDIDriver>
+
+  <defSwitchVector device="TinyFocuser" name="FOCUS_MOTION" label="Move" group="Motion" state="Idle" perm="rw" rule="OneOfMany" timeout="0">
+    <defSwitch name="FOCUS_IN"  label="In">Off</defSwitch>
+    <defSwitch name="FOCUS_OUT" label="Out">Off</defSwitch>
+    <defSwitch name="FOCUS_STOP" label="Stop">On</defSwitch>
+  </defSwitchVector>
+
+  <defNumberVector device="TinyFocuser" name="FOCUS_POSITION" label="Position" group="Motion" state="Idle" perm="rw" timeout="0">
+    <defNumber name="FOCUS_POSITION_VALUE" label="Encoder" format="%.f" min="0" max="4294967296" step="0">0</defNumber>
+  </defNumberVector>
+
+  <defNumberVector device="TinyFocuser" name="FOCUS_TARGET" label="Target" group="Motion" state="Idle" perm="rw" timeout="0">
+    <defNumber name="FOCUS_TARGET_VALUE" label="Encoder" format="%.f" min="0" max="4294967296" step="0">0</defNumber>
+  </defNumberVector>
+
+  <defNumberVector device="TinyFocuser" name="FOCUS_TEMPERATURE" label="Temperature" group="Temperature" state="Idle" perm="ro" timeout="0">
+    <defNumber name="FOCUS_TEMPERATURE_VALUE" label="Temperature (C)" format="%.3f" min="-55" max="125" step="0">0</defNumber>
+  </defNumberVector>
+
+  <defNumberVector device="TinyFocuser" name="FOCUS_POWER" label="Power" group="Settings" state="Idle" perm="rw" timeout="0">
+    <defNumber name="FOCUS_PWM_HOLD" label="Hold Power (%)" format="%.f" min="0" max="100" step="1">50</defNumber>
+    <defNumber name="FOCUS_PWM_MOVE" label="Move Power (%)" format="%.f" min="0" max="100" step="1">100</defNumber>
+  </defNumberVector>
+
+  <defNumberVector device="TinyFocuser" name="FOCUS_SPEED" label="Speed" group="Settings" state="Idle" perm="rw" timeout="0">
+    <defNumber name="FOCUS_TICKS" label="Ticks per step @250kHz" format="%.f" min="200" max="65535" step="0">500</defNumber>
+  </defNumberVector>
+
+</INDIDriver>

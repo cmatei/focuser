@@ -432,7 +432,7 @@ bool TinyFocuser::ISNewSwitch (const char *dev, const char *name, ISState *state
 			prop->s = IPS_ALERT;
 		} else {
 			dir = 0;
-			if (!strcmp(sw->name, "FOCUS_IN"))
+			if (!strcmp(sw->name, "FOCUS_INWARD"))
 				dir = 1;
 
 			if (!strcmp(sw->name, "FOCUS_STOP")) {

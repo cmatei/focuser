@@ -1,8 +1,8 @@
 <INDIDriver>
 
   <defSwitchVector device="TinyFocuser" name="FOCUS_MOTION" label="Move" group="Motion" state="Idle" perm="rw" rule="OneOfMany" timeout="0">
-    <defSwitch name="FOCUS_IN"  label="In">Off</defSwitch>
-    <defSwitch name="FOCUS_OUT" label="Out">Off</defSwitch>
+    <defSwitch name="FOCUS_INWARD"  label="In">Off</defSwitch>
+    <defSwitch name="FOCUS_OUTWARD" label="Out">Off</defSwitch>
     <defSwitch name="FOCUS_STOP" label="Stop">On</defSwitch>
   </defSwitchVector>
 

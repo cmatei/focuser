@@ -27,12 +27,7 @@ public:
 	void ISPoll();
 
 private:
-	int focuser_moving;
-
 	libusb_device_handle *handle;
-
-
-	ISwitchVectorProperty *FocusMotionSP;
 
 	INumberVectorProperty *FocusPositionNP;
 	INumberVectorProperty *FocusTargetNP;
@@ -40,7 +35,6 @@ private:
 	INumberVectorProperty *FocusPWMNP;
 	INumberVectorProperty *FocusSpeedNP;
 	INumberVectorProperty *FocusTemperatureNP;
-
 
 };
 

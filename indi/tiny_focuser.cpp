@@ -233,25 +233,21 @@ TinyFocuser::TinyFocuser()
 	else
 		IDLog("No skeleton file was found.\n");
 
-	FocusMotionSP      = getSwitch("FOCUS_MOTION");
 	FocusPositionNP    = getNumber("FOCUS_POSITION");
-	FocusTargetNP      = getNumber("FOCUS_TARGET");
+	FocusTargetNP      = getNumber("FOCUS_POSITION_REQUEST");
 	FocusTemperatureNP = getNumber("FOCUS_TEMPERATURE");
 	FocusPWMNP         = getNumber("FOCUS_POWER");
 	FocusSpeedNP       = getNumber("FOCUS_SPEED");
 
 	handle = NULL;
-	focuser_moving = 0;
 }
 
 TinyFocuser::~TinyFocuser()
 {
 	Disconnect();
 
-	delete FocusMotionSP;
 	delete FocusPositionNP;
 	delete FocusTargetNP;
-	delete FocusTemperatureNP;
 	delete FocusTemperatureNP;
 	delete FocusPWMNP;
 	delete FocusSpeedNP;
@@ -337,13 +333,10 @@ void TinyFocuser::ISGetProperties (const char *dev)
 
 bool TinyFocuser::ISNewNumber (const char *dev, const char *name, double values[], char *names[], int n)
 {
-	INumberVectorProperty *prop;
+	int dir;
 
 	if (INDI::DefaultDevice::ISNewNumber(dev, name, values, names, n))
 		return true;
-
-	if ((prop = getNumber(name)) == NULL)
-		return false;
 
 	if (!isConnected()) {
 		resetProperties();
@@ -351,54 +344,63 @@ bool TinyFocuser::ISNewNumber (const char *dev, const char *name, double values[
 		return false;
 	}
 
-	if (!strcmp(prop->name, "FOCUS_POSITION")) {
-		IUUpdateNumber(prop, values, names, n);
+	fprintf(stderr, "position?\n");
+	if (!strcmp(name, "FOCUS_POSITION")) {
+		fprintf(stderr, "yes!\n");
+		IUUpdateNumber(FocusPositionNP, values, names, n);
+		fprintf(stderr, "update!\n");
 
-		if (!tiny_set_encoder(handle, prop->np[0].value))
-			prop->s = IPS_OK;
+		if (!tiny_set_encoder(handle, FocusPositionNP->np[0].value))
+			FocusPositionNP->s = IPS_OK;
 		else
-			prop->s = IPS_ALERT;
+			FocusPositionNP->s = IPS_ALERT;
 
-		IDSetNumber(prop, NULL);
+		fprintf(stderr, "encoder set\n");
+		IDSetNumber(FocusPositionNP, NULL);
+
+		fprintf(stderr, "number udpated\n");
+		return true;
+	}
+
+	if (!strcmp(name, "FOCUS_POSITION_REQUEST")) {
+		IUUpdateNumber(FocusTargetNP, values, names, n);
+
+		dir = (FocusTargetNP->np[0].value > FocusPositionNP->np[0].value) ? 1 : 0;
+		if (tiny_set_target(handle, FocusTargetNP->np[0].value) ||
+		    tiny_move(handle, dir)) {
+
+			FocusTargetNP->s = IPS_ALERT;
+		} else {
+			FocusTargetNP->s = IPS_BUSY;
+		}
+
+		IDSetNumber(FocusTargetNP, NULL);
 
 		return true;
 	}
 
-	if (!strcmp(prop->name, "FOCUS_TARGET")) {
-		IUUpdateNumber(prop, values, names, n);
+	if (!strcmp(name, "FOCUS_POWER")) {
+		IUUpdateNumber(FocusPWMNP, values, names, n);
 
-		if (!tiny_set_target(handle, prop->np[0].value))
-			prop->s = IPS_OK;
+		if (!tiny_set_pwm(handle, FocusPWMNP->np[0].value / 100.0 * 255, FocusPWMNP->np[1].value / 100.0 * 255))
+			FocusPWMNP->s = IPS_OK;
 		else
-			prop->s = IPS_ALERT;
+			FocusPWMNP->s = IPS_ALERT;
 
-		IDSetNumber(prop, NULL);
+		IDSetNumber(FocusPWMNP, NULL);
 
 		return true;
 	}
 
-	if (!strcmp(prop->name, "FOCUS_POWER")) {
-		IUUpdateNumber(prop, values, names, n);
+	if (!strcmp(name, "FOCUS_SPEED")) {
+		IUUpdateNumber(FocusSpeedNP, values, names, n);
 
-		if (!tiny_set_pwm(handle, prop->np[0].value / 100.0 * 255, prop->np[1].value / 100.0 * 255))
-			prop->s = IPS_OK;
+		if (!tiny_set_speed(handle, FocusSpeedNP->np[0].value))
+			FocusSpeedNP->s = IPS_OK;
 		else
-			prop->s = IPS_ALERT;
+			FocusSpeedNP->s = IPS_ALERT;
 
-		IDSetNumber(prop, NULL);
-
-		return true;
-	}
-
-	if (!strcmp(prop->name, "FOCUS_SPEED")) {
-		IUUpdateNumber(prop, values, names, n);
-
-		if (!tiny_set_speed(handle, prop->np[0].value))
-			prop->s = IPS_OK;
-		else
-			prop->s = IPS_ALERT;
-
-		IDSetNumber(prop, NULL);
+		IDSetNumber(FocusSpeedNP, NULL);
 
 		return true;
 	}
@@ -408,48 +410,8 @@ bool TinyFocuser::ISNewNumber (const char *dev, const char *name, double values[
 
 bool TinyFocuser::ISNewSwitch (const char *dev, const char *name, ISState *states, char *names[], int n)
 {
-	ISwitchVectorProperty *prop;
-	ISwitch *sw;
-	int dir;
-
 	if (INDI::DefaultDevice::ISNewSwitch(dev, name, states, names, n))
 		return true;
-
-	if ((prop = getSwitch(name)) == NULL)
-		return false;
-
-	if (!isConnected()) {
-		resetProperties();
-		IDMessage(getDeviceName(), "Connect before issuing commands.");
-		return false;
-	}
-
-	if (!strcmp(prop->name, "FOCUS_MOTION")) {
-		IUResetSwitch(prop);
-		IUUpdateSwitch(prop, states, names, n);
-
-		if ((sw = IUFindOnSwitch(prop)) == NULL) {
-			prop->s = IPS_ALERT;
-		} else {
-			dir = 0;
-			if (!strcmp(sw->name, "FOCUS_INWARD"))
-				dir = 1;
-
-			if (!strcmp(sw->name, "FOCUS_STOP")) {
-				tiny_stop(handle);
-				focuser_moving = 0;
-			} else {
-				tiny_move(handle, dir);
-				focuser_moving = 1;
-			}
-
-			prop->s = IPS_OK;
-		}
-
-		IDSetSwitch(prop, NULL);
-
-		return true;
-	}
 
 	return false;
 }
@@ -457,7 +419,7 @@ bool TinyFocuser::ISNewSwitch (const char *dev, const char *name, ISState *state
 
 void TinyFocuser::ISPoll()
 {
-	unsigned int pos;
+	unsigned int pos, target;
 	double d;
 
 	if (!isConnected())
@@ -473,23 +435,13 @@ void TinyFocuser::ISPoll()
 	IDSetNumber(FocusPositionNP, NULL);
 
 	// target
-	if (!tiny_get_target(handle, &pos)) {
-		FocusTargetNP->np[0].value = pos;
-		FocusTargetNP->s = IPS_OK;
+	if (!tiny_get_target(handle, &target)) {
+		FocusTargetNP->np[0].value = target;
+		FocusTargetNP->s = (target == pos) ? IPS_OK : IPS_BUSY;
 	} else {
 		FocusTargetNP->s = IPS_ALERT;
 	}
 	IDSetNumber(FocusTargetNP, NULL);
-
-	// if focuser was moving and reached target, stop
-	if (focuser_moving && (FocusPositionNP->np[0].value == FocusTargetNP->np[0].value)) {
-		focuser_moving = 0;
-
-		IUResetSwitch(FocusMotionSP);
-		FocusMotionSP->sp[2].s = ISS_ON;
-		FocusMotionSP->s = IPS_OK;
-		IDSetSwitch(FocusMotionSP, NULL);
-	}
 
 	// temperature
 	if (!tiny_get_temperature(handle, &d)) {

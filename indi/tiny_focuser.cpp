@@ -344,21 +344,16 @@ bool TinyFocuser::ISNewNumber (const char *dev, const char *name, double values[
 		return false;
 	}
 
-	fprintf(stderr, "position?\n");
 	if (!strcmp(name, "FOCUS_POSITION")) {
-		fprintf(stderr, "yes!\n");
 		IUUpdateNumber(FocusPositionNP, values, names, n);
-		fprintf(stderr, "update!\n");
 
 		if (!tiny_set_encoder(handle, FocusPositionNP->np[0].value))
 			FocusPositionNP->s = IPS_OK;
 		else
 			FocusPositionNP->s = IPS_ALERT;
 
-		fprintf(stderr, "encoder set\n");
 		IDSetNumber(FocusPositionNP, NULL);
 
-		fprintf(stderr, "number udpated\n");
 		return true;
 	}
 

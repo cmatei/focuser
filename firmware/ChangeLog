@@ -1,0 +1,15 @@
+2014-09-04  Matei Conovici  <cmatei@scrat.local.cmatei>
+
+	* use 16bit target/position counters as 32 was overkill (e.g. at
+	  2.5 microns/step we're good for a 16cm focuser)
+	* added CMD_GET/SET_POSITIONS which alters both in one go
+	* added CMD_GET_VERSION so the INDI driver is compatible with both
+	  firmware versions (this is version 2)
+	* added CMD_EXECUTE which enables/disables movement. Movement will
+	  be disabled on CMD_SET_POSITIONS, so a CMD_EXECUTE needs to be
+	  issued
+	* added a 10ms delay when changing power levels to/from move_power
+	  so the motor is energized
+	* added CMD_SET_STEPPING which allows choosing a stepping mode
+	  (wave fullstep, fullstep, halfstep). As a result, we have 4 more
+	  flash bytes available :-) (2044/2048)

@@ -1,4 +1,5 @@
-AVRCC	        = avr-gcc -mmcu=attiny2313 -DF_CPU=16000000
+
+AVRCC	        = avr-gcc -mmcu=attiny2313 -DF_CPU=16000000 $(DEFINES)
 AVROBJCOPY	= avr-objcopy
 AVRCFLAGS	= -Wall -Os -g -Wall -I.
 

@@ -98,10 +98,6 @@ usbMsgLen_t usbFunctionSetup(uchar data[8])
 
 	case CMD_SET_STEPPING:
 		switch (rq->wValue.bytes[0]) {
-		case 0:
-			motor_phases = phases_fullstep_wave;
-			num_phases = 4;
-			break;
 		case 1:
 			motor_phases = phases_fullstep;
 			num_phases = 4;
@@ -109,6 +105,11 @@ usbMsgLen_t usbFunctionSetup(uchar data[8])
 		case 2:
 			motor_phases = phases_halfstep;
 			num_phases = 8;
+			break;
+		case 0:
+		default:
+			motor_phases = phases_fullstep_wave;
+			num_phases = 4;
 			break;
 		}
 
@@ -126,6 +127,10 @@ usbMsgLen_t usbFunctionSetup(uchar data[8])
 
 		/* will need an explicit move command after positions set */
 		execute = 0;
+		break;
+
+	case CMD_EXECUTE:
+		execute = rq->wValue.bytes[0];
 		break;
 	}
 	return 0;

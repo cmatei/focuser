@@ -1,0 +1,2 @@
+/usr/local/bin/indi_focuser
+/usr/local/share/indi/indi_tinyfocuser_sk.xml

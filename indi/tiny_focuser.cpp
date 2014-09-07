@@ -1,201 +1,62 @@
-#define _BSD_SOURCE
 
-#include <stdlib.h>
-#include <stdint.h>
-#include <sys/types.h>
-#include <sys/stat.h>
-#include <unistd.h>
-
-#include <endian.h>
+#include <memory>
 
 #include "tiny_focuser.h"
-#include "config.h"
+
+#ifndef HUGE
+#define HUGE 1e20
+#endif
 
 #define DEV_MANUFACTURER "mconovici@gmail.com"
 #define DEV_PRODUCT "Focuser"
 
 #define INDI_NAME "TinyFocuser"
 
-static TinyFocuser *focuser = NULL;
-static int initialized = 0;
+#define POLLMS 1000
 
-const int POLLMS = 1000;
+#define currentPWMHold     PWMN[0].value
+#define currentPWMMove     PWMN[1].value
+#define currentSpeed       SpeedN[0].value
+#define currentEncoder     EncoderN[0].value
+#define currentTemperature TemperatureN[0].value
+#define currentPosition    FocusAbsPosN[0].value
+#define currentStepping    SteppingS[0].s
 
-#define REQUEST_READ  0xC0
-#define REQUEST_WRITE 0x40
+std::auto_ptr<TinyFocuser> focuser(0);
 
-enum {
-	CMD_GET_ENCODER = 1,	/* get current encoder value */
-	CMD_SET_ENCODER,	/* set current encoder value */
-
-	CMD_GET_TARGET,		/* get target encoder value */
-	CMD_SET_TARGET,		/* set target encoder value */
-
-	CMD_SET_PWM,		/* set movement/hold pwm */
-
-	CMD_GET_TEMPERATURE,	/* get current temperature */
-
-	CMD_MOVE,		/* start moving in specified direction */
-	CMD_STOP,		/* abort movement */
-
-	CMD_SET_SPEED,          /* steps per tick */
-};
-
-typedef union {
-	uint32_t u32;
-	uint16_t u16;
-	int16_t  i16;
-
-	unsigned char arr[4];
-} byte_shuffle_t;
-
-static int tiny_get_encoder(libusb_device_handle *handle, unsigned int *val)
+void ISInit()
 {
-	byte_shuffle_t x;
+	static int isInit = false;
 
-	if (libusb_control_transfer(handle, REQUEST_READ, CMD_GET_ENCODER,
-				    0, 0, x.arr, 4, 0) != 4)
-		return 1;
+	if (isInit)
+		return;
 
-	*val = le32toh(x.u32);
-	return 0;
+	isInit = true;
+	if (focuser.get() == 0)
+		focuser.reset(new TinyFocuser());
 }
-
-static int tiny_set_encoder(libusb_device_handle *handle, unsigned int val)
-{
-	if (libusb_control_transfer(handle, REQUEST_WRITE, CMD_SET_ENCODER,
-				    (val & 0xffff0000) >> 16, val & 0xffff,
-				    NULL, 0, 0) != 0)
-		return 1;
-
-	return 0;
-}
-
-static int tiny_get_target(libusb_device_handle *handle, unsigned int *val)
-{
-	byte_shuffle_t x;
-
-	if (libusb_control_transfer(handle, REQUEST_READ, CMD_GET_TARGET,
-				    0, 0, x.arr, 4, 0) != 4)
-		return 1;
-
-	*val = le32toh(x.u32);
-	return 0;
-}
-
-static int tiny_set_target(libusb_device_handle *handle, unsigned int val)
-{
-	if (libusb_control_transfer(handle, REQUEST_WRITE, CMD_SET_TARGET,
-				    (val & 0xffff0000) >> 16, val & 0xffff,
-				    NULL, 0, 0) != 0)
-		return 1;
-
-	return 0;
-}
-
-static int tiny_get_temperature(libusb_device_handle *handle, double *temperature)
-{
-	byte_shuffle_t x;
-
-	if (libusb_control_transfer(handle, REQUEST_READ, CMD_GET_TEMPERATURE,
-				    0, 0, x.arr, 2, 0) != 2)
-		return 1;
-
-	x.u16 = le16toh(x.u16);
-	*temperature = x.i16 / 16.0;
-
-	return 0;
-}
-
-static int tiny_set_speed(libusb_device_handle *handle, int ticks_per_step)
-{
-	if (libusb_control_transfer(handle, REQUEST_WRITE, CMD_SET_SPEED,
-				    ticks_per_step, 0, NULL, 0, 0) != 0)
-		return 1;
-
-	return 0;
-}
-
-static int tiny_set_pwm(libusb_device_handle *handle, int hold_pwm, int move_pwm)
-{
-	if (libusb_control_transfer(handle, REQUEST_WRITE, CMD_SET_PWM,
-				    (hold_pwm << 8) + move_pwm, 0, NULL, 0, 0) != 0)
-		return 1;
-
-	return 0;
-}
-
-static int tiny_move(libusb_device_handle *handle, int dir)
-{
-	if (libusb_control_transfer(handle, REQUEST_WRITE, CMD_MOVE,
-				    dir, 0, NULL, 0, 0) != 0)
-		return 1;
-
-	return 0;
-}
-
-static int tiny_stop(libusb_device_handle *handle)
-{
-	if (libusb_control_transfer(handle, REQUEST_WRITE, CMD_STOP,
-				    0, 0, NULL, 0, 0) != 0)
-		return 1;
-
-	return 0;
-}
-
-
-void ISPoll(void *ptr)
-{
-	focuser->ISPoll();
-	IEAddTimer(POLLMS, ISPoll, NULL);
-}
-
-static void initialize()
-{
-	if (!initialized) {
-		initialized = 1;
-		libusb_init (NULL);
-
-		focuser = new TinyFocuser();
-		IEAddTimer(POLLMS, ISPoll, NULL);
-	}
-}
-
-
 
 void ISGetProperties(const char *dev)
 {
-	if (dev && strcmp(dev, INDI_NAME))
-		return;
-
-	initialize();
+	ISInit();
 	focuser->ISGetProperties(dev);
 }
 
 void ISNewSwitch(const char *dev, const char *name, ISState *states, char *names[], int n)
 {
-	if (dev && strcmp(dev, INDI_NAME))
-		return;
-
-	initialize();
+	ISInit();
 	focuser->ISNewSwitch(dev, name, states, names, n);
 }
 
 void ISNewText (const char *dev, const char *name, char *texts[], char *names[], int n)
 {
-	if (dev && strcmp(dev, INDI_NAME))
-		return;
-
-	initialize();
+	ISInit();
 	focuser->ISNewText(dev, name, texts, names, n);
 }
 
 void ISNewNumber (const char *dev, const char *name, double values[], char *names[], int n)
 {
-	if (dev && strcmp(dev, INDI_NAME))
-		return;
-
-	initialize();
+	ISInit();
 	focuser->ISNewNumber(dev, name, values, names, n);
 }
 
@@ -211,56 +72,169 @@ void ISNewBLOB (const char *dev, const char *name, int sizes[], int blobsizes[],
 	INDI_UNUSED(n);
 }
 
-void ISSnoopDevice (XMLEle *root)
+void ISSnoopDevice(XMLEle *root)
 {
-	INDI_UNUSED(root);
+	ISInit();
+	focuser->ISSnoopDevice(root);
 }
-
 
 
 TinyFocuser::TinyFocuser()
 {
-	char skeleton[PATH_MAX];
-	struct stat st;
-	char *skel = getenv("INDISKEL");
-
-	snprintf(skeleton, PATH_MAX, "%s/indi_tinyfocuser_sk.xml", INDI_DATA_DIR);
-
-	if (skel)
-		buildSkeleton(skel);
-	else if (stat(skeleton, &st) == 0)
-		buildSkeleton(skeleton);
-	else
-		IDLog("No skeleton file was found.\n");
-
-	FocusPositionNP    = getNumber("FOCUS_POSITION");
-	FocusTargetNP      = getNumber("FOCUS_POSITION_REQUEST");
-	FocusTemperatureNP = getNumber("FOCUS_TEMPERATURE");
-	FocusPWMNP         = getNumber("FOCUS_POWER");
-	FocusSpeedNP       = getNumber("FOCUS_SPEED");
-
 	handle = NULL;
+
+	// canAbsMove, canRelMove, canAbort, variableSpeed
+	setFocuserFeatures(true, true, true, false);
 }
 
 TinyFocuser::~TinyFocuser()
 {
-	Disconnect();
-
-	delete FocusPositionNP;
-	delete FocusTargetNP;
-	delete FocusTemperatureNP;
-	delete FocusPWMNP;
-	delete FocusSpeedNP;
+	if (handle)
+		libusb_close(handle);
 }
 
 const char *TinyFocuser::getDefaultName()
 {
-	return (char *) INDI_NAME;
+	return INDI_NAME;
 }
 
+bool TinyFocuser::initProperties()
+{
+	INDI::Focuser::initProperties();
+
+	/* Relative and absolute movement */
+	FocusRelPosN[0].min = -65535.;
+	FocusRelPosN[0].max = 65535.;
+	FocusRelPosN[0].value = 0;
+	FocusRelPosN[0].step = 1;
+
+	FocusAbsPosN[0].min = 0.;
+	FocusAbsPosN[0].max = 65535.;
+	FocusAbsPosN[0].value = 0;
+	FocusAbsPosN[0].step = 1;
+
+	/* Temperature */
+	IUFillNumber(&TemperatureN[0], "TEMPERATURE", "Degrees (C)", "%6.2f", -HUGE, HUGE, 0., 0.);
+	IUFillNumberVector(&TemperatureNP, TemperatureN, 1, getDeviceName(), "FOCUS_TEMPERATURE", "Temperature", MAIN_CONTROL_TAB, IP_RO, 0, IPS_IDLE);
+
+	/* Current position encoder */
+	IUFillNumber(&EncoderN[0], "CURRENT_POSITION", "Value", "%.f", 0., 65535., 1., 0.);
+	IUFillNumberVector(&EncoderNP, EncoderN, 1, getDeviceName(), "CURRENT_POSITION", "Position Encoder", OPTIONS_TAB, IP_WO, 0, IPS_IDLE);
+
+	/* Stepping mode */
+	IUFillSwitch(&SteppingS[0], "MOTOR_ONEPHASE", "One phase", ISS_ON);
+	IUFillSwitch(&SteppingS[1], "MOTOR_TWOPHASE", "Two phase", ISS_OFF);
+	IUFillSwitch(&SteppingS[2], "MOTOR_HALFSTEP", "Halfstep",  ISS_OFF);
+	IUFillSwitchVector(&SteppingSP, SteppingS, 3, getDeviceName(), "MOTOR_MODE", "Stepping mode", OPTIONS_TAB, IP_RW, ISR_1OFMANY, 0, IPS_IDLE);
+
+	/* Stepping speed */
+	IUFillNumber(&SpeedN[0], "MOTOR_SPEED", "Speed (%)", "%.f", 1., 100., 1., 1.);
+	IUFillNumberVector(&SpeedNP, SpeedN, 1, getDeviceName(), "MOTOR_SPEED", "Stepping speed", OPTIONS_TAB, IP_RW, 0, IPS_IDLE);
+
+	/* PWM for hold/move */
+	IUFillNumber(&PWMN[0], "MOTOR_PWM_HOLD", "Hold (%)", "%.f", 0., 100., 1., 0.);
+	IUFillNumber(&PWMN[1], "MOTOR_PWM_MOVE", "Move (%)", "%.f", 0., 100., 1., 100.);
+	IUFillNumberVector(&PWMNP, PWMN, 2, getDeviceName(), "MOTOR_POWER", "Motor Power", OPTIONS_TAB, IP_RW, 0, IPS_IDLE);
+}
+
+bool TinyFocuser::updateProperties()
+{
+
+	INDI::Focuser::updateProperties();
+
+	if (isConnected()) {
+		defineNumber(&TemperatureNP);
+		defineNumber(&EncoderNP);
+		defineSwitch(&SteppingSP);
+		defineNumber(&SpeedNP);
+		defineNumber(&PWMNP);
+
+		updateFocuserData();
+	} else {
+		deleteProperty(TemperatureNP.name);
+		deleteProperty(EncoderNP.name);
+		deleteProperty(SteppingSP.name);
+		deleteProperty(SpeedNP.name);
+		deleteProperty(PWMNP.name);
+	}
+}
+
+void TinyFocuser::updateFocuserData()
+{
+	int current = 0, target = 0;
+	double temp = 0.0;
+	int statuschange, valuechange;
+	IPState s;
+
+	/* temperature */
+	statuschange = 0; valuechange = 0;
+	if ((s = hw_get_temperature(&temp) ? IPS_ALERT : IPS_OK) == IPS_OK) {
+		if (currentTemperature != temp) {
+			currentTemperature = temp;
+			valuechange = 1;
+		}
+	}
+	if (TemperatureNP.s != s)
+		statuschange = 1;
+	TemperatureNP.s = s;
+	if (statuschange || valuechange)
+		IDSetNumber(&TemperatureNP, NULL);
+
+	/* position */
+	statuschange = 0; valuechange = 0;
+	if ((s = hw_get_positions(&current, &target) ? IPS_ALERT : IPS_OK) == IPS_OK) {
+		if (current != target) {
+			s = IPS_BUSY;
+		} else {
+			FocusRelPosN[0].value = 0;
+		}
+
+		if (current != currentPosition) {
+			valuechange = 1;
+			currentPosition == current;
+		}
+	}
+	if (FocusAbsPosNP.s != s || FocusRelPosNP.s != s)
+		statuschange = 1;
+	FocusAbsPosNP.s = FocusRelPosNP.s = s;
+	if (statuschange || valuechange) {
+		IDSetNumber(&FocusAbsPosNP, NULL);
+		IDSetNumber(&FocusRelPosNP, NULL);
+	}
+}
+
+bool TinyFocuser::Abort()
+{
+	int current, target;
+
+	if (hw_execute(0) || hw_get_positions(&current, &target) || hw_set_positions(current, current))
+		return false;
+
+	return true;
+}
+
+// -1 error
+// 0 moved
+// 1 moving
+int TinyFocuser::MoveAbs(int ticks)
+{
+	int current = 0, target;
+
+	if (hw_execute(0) || hw_get_positions(&current, &target))
+		return -1;
+
+	if (current == ticks)
+		return 0;
+
+	if (hw_set_positions(current, ticks) || hw_execute(1))
+		return -1;
+
+	return 1;
+}
 
 bool TinyFocuser::Connect()
 {
+	libusb_context *ctx;
         libusb_device **devices;
         libusb_device *dev;
         struct libusb_device_descriptor desc;
@@ -269,10 +243,17 @@ bool TinyFocuser::Connect()
         char manufacturer[32];
         char product[32];
 
-        Disconnect();
+	if (isConnected()) {
+		IDMessage(getDeviceName(), "Already connected.");
+		return true;
+	}
+
+	if (libusb_init(NULL)) {
+		DEBUG(INDI::Logger::DBG_ERROR, "libusb_init failed!");
+		return false;
+	}
 
         n = libusb_get_device_list (NULL, &devices);
-
         for (i = 0; i < n; i++) {
                 dev = devices[i];
                 if (libusb_get_device_descriptor(dev, &desc) < 0)
@@ -301,16 +282,17 @@ bool TinyFocuser::Connect()
 
                 libusb_free_device_list (devices, 1);
 
+		SetTimer(POLLMS);
+
                 /* found it, keep the handle open */
 		IDMessage(getDeviceName(), "Connected.");
-
                 return true;
         }
 
         libusb_free_device_list (devices, 1);
         handle = NULL;
 
-        return false;
+	return false;
 }
 
 bool TinyFocuser::Disconnect()
@@ -318,132 +300,195 @@ bool TinyFocuser::Disconnect()
 	if (!isConnected())
 		return true;
 
-	libusb_close(handle);
+	if (handle)
+		libusb_close(handle);
 	handle = NULL;
 
 	IDMessage(getDeviceName(), "Disconnected.");
-
 	return true;
 }
 
-void TinyFocuser::ISGetProperties (const char *dev)
-{
-	INDI::DefaultDevice::ISGetProperties(dev);
-}
 
 bool TinyFocuser::ISNewNumber (const char *dev, const char *name, double values[], char *names[], int n)
 {
-	int dir;
+	if (!strcmp(dev, getDeviceName())) {
 
-	if (INDI::DefaultDevice::ISNewNumber(dev, name, values, names, n))
-		return true;
+		if (!strcmp(name, PWMNP.name)) {
+			if (IUUpdateNumber(&PWMNP, values, names, n) < 0)
+				return false;
 
-	if (!isConnected()) {
-		resetProperties();
-		IDMessage(getDeviceName(), "Connect before issuing commands.");
-		return false;
-	}
+			if (hw_execute(0) || hw_set_pwm(currentPWMHold, currentPWMMove))
+				PWMNP.s = IPS_ALERT;
+			else
+				PWMNP.s = IPS_OK;
 
-	if (!strcmp(name, "FOCUS_POSITION")) {
-		IUUpdateNumber(FocusPositionNP, values, names, n);
-
-		if (!tiny_set_encoder(handle, FocusPositionNP->np[0].value))
-			FocusPositionNP->s = IPS_OK;
-		else
-			FocusPositionNP->s = IPS_ALERT;
-
-		IDSetNumber(FocusPositionNP, NULL);
-
-		return true;
-	}
-
-	if (!strcmp(name, "FOCUS_POSITION_REQUEST")) {
-		IUUpdateNumber(FocusTargetNP, values, names, n);
-
-		dir = (FocusTargetNP->np[0].value > FocusPositionNP->np[0].value) ? 1 : 0;
-		if (tiny_set_target(handle, FocusTargetNP->np[0].value) ||
-		    tiny_move(handle, dir)) {
-
-			FocusTargetNP->s = IPS_ALERT;
-		} else {
-			FocusTargetNP->s = IPS_BUSY;
+			IDSetNumber(&PWMNP, NULL);
+			return true;
 		}
 
-		IDSetNumber(FocusTargetNP, NULL);
+		if (!strcmp(name, SpeedNP.name)) {
+			if (IUUpdateNumber(&SpeedNP, values, names, n) < 0)
+				return false;
 
-		return true;
+			/* ticks per step @ 250kHz
+			    125  => 2000 steps/sec = 10 rot/sec
+			    2500 => 100 steps/sec  = 0.5 rot/sec */
+
+			if (hw_execute(0) || hw_set_speed(125 + (100.0 - currentSpeed) * 23.75))
+				SpeedNP.s = IPS_ALERT;
+			else
+				SpeedNP.s = IPS_OK;
+
+			IDSetNumber(&SpeedNP, NULL);
+			return true;
+		}
+
+		if (!strcmp(name, EncoderNP.name)) {
+			if (IUUpdateNumber(&EncoderNP, values, names, n) < 0)
+				return false;
+
+			Abort();
+
+			if (hw_set_positions(currentEncoder, currentEncoder))
+				EncoderNP.s = IPS_ALERT;
+			else
+				EncoderNP.s = IPS_OK;
+
+			IDSetNumber(&EncoderNP, NULL);
+			return true;
+		}
 	}
 
-	if (!strcmp(name, "FOCUS_POWER")) {
-		IUUpdateNumber(FocusPWMNP, values, names, n);
-
-		if (!tiny_set_pwm(handle, FocusPWMNP->np[0].value / 100.0 * 255, FocusPWMNP->np[1].value / 100.0 * 255))
-			FocusPWMNP->s = IPS_OK;
-		else
-			FocusPWMNP->s = IPS_ALERT;
-
-		IDSetNumber(FocusPWMNP, NULL);
-
-		return true;
-	}
-
-	if (!strcmp(name, "FOCUS_SPEED")) {
-		IUUpdateNumber(FocusSpeedNP, values, names, n);
-
-		if (!tiny_set_speed(handle, FocusSpeedNP->np[0].value))
-			FocusSpeedNP->s = IPS_OK;
-		else
-			FocusSpeedNP->s = IPS_ALERT;
-
-		IDSetNumber(FocusSpeedNP, NULL);
-
-		return true;
-	}
-
-	return false;
+	return INDI::Focuser::ISNewNumber(dev, name, values, names, n);
 }
 
 bool TinyFocuser::ISNewSwitch (const char *dev, const char *name, ISState *states, char *names[], int n)
 {
-	if (INDI::DefaultDevice::ISNewSwitch(dev, name, states, names, n))
-		return true;
+	if (!strcmp(dev, getDeviceName())) {
+		if (!strcmp(name, SteppingSP.name)) {
+			if (IUUpdateSwitch(&SteppingSP, states, names, n) < 0)
+				return false;
 
-	return false;
+			if (hw_execute(0) || hw_set_stepping(currentStepping))
+				SteppingSP.s = IPS_ALERT;
+			else
+				SteppingSP.s = IPS_OK;
+
+			IDSetSwitch(&SteppingSP, NULL);
+			return true;
+		}
+	}
+
+	return INDI::Focuser::ISNewSwitch(dev, name, states, names, n);
 }
 
 
-void TinyFocuser::ISPoll()
+void TinyFocuser::TimerHit()
 {
-	unsigned int pos, target;
-	double d;
-
 	if (!isConnected())
 		return;
 
-	// encoder
-	if (!tiny_get_encoder(handle, &pos)) {
-		FocusPositionNP->np[0].value = pos;
-		FocusPositionNP->s = IPS_OK;
-	} else {
-		FocusPositionNP->s = IPS_ALERT;
-	}
-	IDSetNumber(FocusPositionNP, NULL);
+	DEBUG(INDI::Logger::DBG_DEBUG, "TimerHit!");
 
-	// target
-	if (!tiny_get_target(handle, &target)) {
-		FocusTargetNP->np[0].value = target;
-		FocusTargetNP->s = (target == pos) ? IPS_OK : IPS_BUSY;
-	} else {
-		FocusTargetNP->s = IPS_ALERT;
-	}
-	IDSetNumber(FocusTargetNP, NULL);
+	updateFocuserData();
 
-	// temperature
-	if (!tiny_get_temperature(handle, &d)) {
-		FocusTemperatureNP->np[0].value = d;
-		FocusTemperatureNP->s = IPS_OK;
-	} else {
-		FocusTemperatureNP->s = IPS_ALERT;
-	}
-	IDSetNumber(FocusTemperatureNP, NULL);
+	SetTimer(POLLMS);
+}
+
+
+int TinyFocuser::hw_get_version()
+{
+	unsigned char data[1];
+
+	if (!handle || (libusb_control_transfer(handle, REQUEST_READ, CMD_GET_VERSION, 0, 0, data, 1, 0) != 1))
+		return -1;
+
+	return data[0];
+}
+
+int TinyFocuser::hw_get_temperature(double *temp)
+{
+	unsigned char data[2];
+
+	if (!handle || (libusb_control_transfer(handle, REQUEST_READ, CMD_GET_TEMPERATURE, 0, 0, data, 2, 0) != 2))
+		return -1;
+
+	// two temp bytes coming from DS1820, signed 16bit
+
+	//       x.u16 = le16toh(x.u16);
+	//       *temperature = x.i16 / 16.0;
+
+
+	return 0;
+}
+
+int TinyFocuser::hw_get_positions(int *current, int *target)
+{
+	unsigned char data[4];
+
+	if (!handle || (libusb_control_transfer(handle, REQUEST_READ, CMD_GET_POSITIONS, 0, 0, data, 4, 0) != 4))
+		return -1;
+
+	// static uint16_t positions[2] = { 32768, 32768 };
+        // #define motor_encoder (positions[0])
+        // #define motor_target  (positions[1])
+
+	*current = (data[1] << 8) + data[0];
+	*target  = (data[3] << 8) + data[2];
+
+	return 0;
+}
+
+int TinyFocuser::hw_set_positions(int current, int target)
+{
+	// motor_encoder = rq->wIndex.word;
+	// motor_target  = rq->wValue.word;
+
+	if (!handle || (libusb_control_transfer(handle, REQUEST_READ, CMD_SET_POSITIONS, htole16(target), htole16(current), NULL, 0, 0) != 0))
+		return -1;
+
+	return 0;
+}
+
+int TinyFocuser::hw_execute(int on)
+{
+	// execute = rq->wValue.bytes[0];
+
+	if (!handle || (libusb_control_transfer(handle, REQUEST_WRITE, CMD_EXECUTE, htole16(on), 0, NULL, 0, 0) != 0))
+		return -1;
+
+	return 0;
+}
+
+int TinyFocuser::hw_set_pwm(int hold, int move)
+{
+	int val = (hold << 8) + move;
+
+	// move_power = rq->wValue.bytes[0];
+	// hold_power = rq->wValue.bytes[1];
+
+	if (!handle || (libusb_control_transfer(handle, REQUEST_WRITE, CMD_SET_PWM, htole16(val), 0, NULL, 0, 0) != 0))
+		return -1;
+
+	return 0;
+}
+
+int TinyFocuser::hw_set_speed(int speed)
+{
+	// OCR1A = rq->wValue.word;
+
+	if (!handle || (libusb_control_transfer(handle, REQUEST_WRITE, CMD_SET_SPEED, htole16(speed), 0, NULL, 0, 0) != 0))
+		return -1;
+
+	return 0;
+}
+
+int TinyFocuser::hw_set_stepping(int mode)
+{
+	// switch (rq->wValue.bytes[0]) {
+
+	if (!handle || (libusb_control_transfer(handle, REQUEST_WRITE, CMD_SET_SPEED, (mode & 0x03), 0, NULL, 0, 0) != 0))
+		return -1;
+
+	return 0;
 }

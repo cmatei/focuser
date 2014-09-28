@@ -1,5 +1,6 @@
 
 #include <memory>
+#include <cmath>
 
 #include "tiny_focuser.h"
 
@@ -12,51 +13,34 @@
 
 #define INDI_NAME "TinyFocuser"
 
-#define POLLMS 1000
+#define POLLMS 250
 
-#define currentPWMHold     PWMN[0].value
-#define currentPWMMove     PWMN[1].value
-#define currentSpeed       SpeedN[0].value
-#define currentEncoder     EncoderN[0].value
-#define currentTemperature TemperatureN[0].value
-#define currentPosition    FocusAbsPosN[0].value
-#define currentStepping    SteppingS[0].s
+static TinyFocuser *focuser = new TinyFocuser();
 
-std::auto_ptr<TinyFocuser> focuser(0);
-
-void ISInit()
+static int clamp_int(int val, int min, int max)
 {
-	static int isInit = false;
-
-	if (isInit)
-		return;
-
-	isInit = true;
-	if (focuser.get() == 0)
-		focuser.reset(new TinyFocuser());
+	if (val < min) return min;
+	if (val > max) return max;
+	return val;
 }
 
 void ISGetProperties(const char *dev)
 {
-	ISInit();
 	focuser->ISGetProperties(dev);
 }
 
 void ISNewSwitch(const char *dev, const char *name, ISState *states, char *names[], int n)
 {
-	ISInit();
 	focuser->ISNewSwitch(dev, name, states, names, n);
 }
 
 void ISNewText (const char *dev, const char *name, char *texts[], char *names[], int n)
 {
-	ISInit();
 	focuser->ISNewText(dev, name, texts, names, n);
 }
 
 void ISNewNumber (const char *dev, const char *name, double values[], char *names[], int n)
 {
-	ISInit();
 	focuser->ISNewNumber(dev, name, values, names, n);
 }
 
@@ -74,7 +58,6 @@ void ISNewBLOB (const char *dev, const char *name, int sizes[], int blobsizes[],
 
 void ISSnoopDevice(XMLEle *root)
 {
-	ISInit();
 	focuser->ISSnoopDevice(root);
 }
 
@@ -85,6 +68,9 @@ TinyFocuser::TinyFocuser()
 
 	// canAbsMove, canRelMove, canAbort, variableSpeed
 	setFocuserFeatures(true, true, true, false);
+
+	lastPos = targetPos = 0;
+	lastTemp = 0.0;
 }
 
 TinyFocuser::~TinyFocuser()
@@ -102,24 +88,21 @@ bool TinyFocuser::initProperties()
 {
 	INDI::Focuser::initProperties();
 
-	/* Relative and absolute movement */
-	FocusRelPosN[0].min = -65535.;
-	FocusRelPosN[0].max = 65535.;
-	FocusRelPosN[0].value = 0;
-	FocusRelPosN[0].step = 1;
-
+	/* Absolute movement */
 	FocusAbsPosN[0].min = 0.;
 	FocusAbsPosN[0].max = 65535.;
 	FocusAbsPosN[0].value = 0;
 	FocusAbsPosN[0].step = 1;
 
+	/* Relative movement */
+	FocusRelPosN[0].min = 0.;
+	FocusRelPosN[0].max = 65535.;
+	FocusRelPosN[0].value = 5;
+	FocusRelPosN[0].step = 1;
+
 	/* Temperature */
 	IUFillNumber(&TemperatureN[0], "TEMPERATURE", "Degrees (C)", "%6.2f", -HUGE, HUGE, 0., 0.);
 	IUFillNumberVector(&TemperatureNP, TemperatureN, 1, getDeviceName(), "FOCUS_TEMPERATURE", "Temperature", MAIN_CONTROL_TAB, IP_RO, 0, IPS_IDLE);
-
-	/* Current position encoder */
-	IUFillNumber(&EncoderN[0], "CURRENT_POSITION", "Value", "%.f", 0., 65535., 1., 0.);
-	IUFillNumberVector(&EncoderNP, EncoderN, 1, getDeviceName(), "CURRENT_POSITION", "Position Encoder", OPTIONS_TAB, IP_WO, 0, IPS_IDLE);
 
 	/* Stepping mode */
 	IUFillSwitch(&SteppingS[0], "MOTOR_ONEPHASE", "One phase", ISS_ON);
@@ -135,80 +118,73 @@ bool TinyFocuser::initProperties()
 	IUFillNumber(&PWMN[0], "MOTOR_PWM_HOLD", "Hold (%)", "%.f", 0., 100., 1., 0.);
 	IUFillNumber(&PWMN[1], "MOTOR_PWM_MOVE", "Move (%)", "%.f", 0., 100., 1., 100.);
 	IUFillNumberVector(&PWMNP, PWMN, 2, getDeviceName(), "MOTOR_POWER", "Motor Power", OPTIONS_TAB, IP_RW, 0, IPS_IDLE);
+
+	/* Position encoder reset */
+	IUFillNumber(&EncoderN[0], "MOTOR_POSITION", "Position encoder", "%.f", 0., 65535., 1., 32768.);
+	IUFillNumberVector(&EncoderNP, EncoderN, 1, getDeviceName(), "MOTOR_POSITION", "Position Encoder", OPTIONS_TAB, IP_WO, 0, IPS_IDLE);
+
 }
 
 bool TinyFocuser::updateProperties()
 {
-
 	INDI::Focuser::updateProperties();
 
 	if (isConnected()) {
 		defineNumber(&TemperatureNP);
-		defineNumber(&EncoderNP);
 		defineSwitch(&SteppingSP);
 		defineNumber(&SpeedNP);
 		defineNumber(&PWMNP);
+		defineNumber(&EncoderNP);
 
-		updateFocuserData();
+		getCurrentParams();
+
+		loadConfig(true);
 	} else {
 		deleteProperty(TemperatureNP.name);
-		deleteProperty(EncoderNP.name);
 		deleteProperty(SteppingSP.name);
 		deleteProperty(SpeedNP.name);
 		deleteProperty(PWMNP.name);
+		deleteProperty(EncoderNP.name);
 	}
 }
 
-void TinyFocuser::updateFocuserData()
+bool TinyFocuser::updateTemperature()
 {
-	int current = 0, target = 0;
-	double temp = 0.0;
-	int statuschange, valuechange;
-	IPState s;
+	if (hw_get_temperature(&TemperatureN[0].value))
+		return false;
 
-	/* temperature */
-	statuschange = 0; valuechange = 0;
-	if ((s = hw_get_temperature(&temp) ? IPS_ALERT : IPS_OK) == IPS_OK) {
-		if (currentTemperature != temp) {
-			currentTemperature = temp;
-			valuechange = 1;
-		}
-	}
-	if (TemperatureNP.s != s)
-		statuschange = 1;
-	TemperatureNP.s = s;
-	if (statuschange || valuechange)
+	return true;
+}
+
+bool TinyFocuser::updatePosition()
+{
+	int current, target;
+
+	if (hw_get_positions(&current, &target))
+		return false;
+
+	FocusAbsPosN[0].value = current;
+	return true;
+}
+
+void TinyFocuser::getCurrentParams()
+{
+	if (updateTemperature())
 		IDSetNumber(&TemperatureNP, NULL);
 
-	/* position */
-	statuschange = 0; valuechange = 0;
-	if ((s = hw_get_positions(&current, &target) ? IPS_ALERT : IPS_OK) == IPS_OK) {
-		if (current != target) {
-			s = IPS_BUSY;
-		} else {
-			FocusRelPosN[0].value = 0;
-		}
-
-		if (current != currentPosition) {
-			valuechange = 1;
-			currentPosition == current;
-		}
-	}
-	if (FocusAbsPosNP.s != s || FocusRelPosNP.s != s)
-		statuschange = 1;
-	FocusAbsPosNP.s = FocusRelPosNP.s = s;
-	if (statuschange || valuechange) {
+	if (updatePosition())
 		IDSetNumber(&FocusAbsPosNP, NULL);
-		IDSetNumber(&FocusRelPosNP, NULL);
-	}
 }
 
 bool TinyFocuser::Abort()
 {
-	int current, target;
-
-	if (hw_execute(0) || hw_get_positions(&current, &target) || hw_set_positions(current, current))
+	if (hw_execute(0))
 		return false;
+
+	FocusAbsPosNP.s = IPS_IDLE;
+	FocusRelPosNP.s = IPS_IDLE;
+	IDSetNumber(&FocusAbsPosNP, NULL);
+	IDSetNumber(&FocusRelPosNP, NULL);
 
 	return true;
 }
@@ -218,18 +194,37 @@ bool TinyFocuser::Abort()
 // 1 moving
 int TinyFocuser::MoveAbs(int ticks)
 {
-	int current = 0, target;
+	targetPos = clamp_int(ticks, 0, 65535);
 
-	if (hw_execute(0) || hw_get_positions(&current, &target))
+	if (hw_execute(0) || !updatePosition())
 		return -1;
 
-	if (current == ticks)
+	if (targetPos == FocusAbsPosN[0].value)
 		return 0;
 
-	if (hw_set_positions(current, ticks) || hw_execute(1))
+	if (hw_set_positions((int) FocusAbsPosN[0].value, (int) targetPos) || hw_execute(1))
 		return -1;
 
+	FocusAbsPosNP.s = IPS_BUSY;
+
 	return 1;
+}
+
+int TinyFocuser::MoveRel(FocusDirection dir, unsigned int ticks)
+{
+	int target;
+
+	if (dir == FOCUS_INWARD)
+		target = FocusAbsPosN[0].value - ticks;
+	else
+		target = FocusAbsPosN[0].value + ticks;
+
+	target = clamp_int(target, 0, 65535);
+
+	FocusRelPosN[0].value = target;
+	FocusRelPosNP.s = IPS_BUSY;
+
+	return MoveAbs((int) target);
 }
 
 bool TinyFocuser::Connect()
@@ -248,10 +243,10 @@ bool TinyFocuser::Connect()
 		return true;
 	}
 
-	if (libusb_init(NULL)) {
-		DEBUG(INDI::Logger::DBG_ERROR, "libusb_init failed!");
+	if (libusb_init(NULL))
 		return false;
-	}
+
+	handle = NULL;
 
         n = libusb_get_device_list (NULL, &devices);
         for (i = 0; i < n; i++) {
@@ -279,20 +274,15 @@ bool TinyFocuser::Connect()
                         continue;
                 }
 
-
-                libusb_free_device_list (devices, 1);
-
-		SetTimer(POLLMS);
-
                 /* found it, keep the handle open */
+
 		IDMessage(getDeviceName(), "Connected.");
-                return true;
+		SetTimer(POLLMS);
         }
 
         libusb_free_device_list (devices, 1);
-        handle = NULL;
 
-	return false;
+	return handle ? true : false;
 }
 
 bool TinyFocuser::Disconnect()
@@ -317,7 +307,7 @@ bool TinyFocuser::ISNewNumber (const char *dev, const char *name, double values[
 			if (IUUpdateNumber(&PWMNP, values, names, n) < 0)
 				return false;
 
-			if (hw_execute(0) || hw_set_pwm(currentPWMHold, currentPWMMove))
+			if (hw_execute(0) || hw_set_pwm(PWMN[0].value / 100.0 * 255, PWMN[1].value / 100.0 * 255))
 				PWMNP.s = IPS_ALERT;
 			else
 				PWMNP.s = IPS_OK;
@@ -334,7 +324,8 @@ bool TinyFocuser::ISNewNumber (const char *dev, const char *name, double values[
 			    125  => 2000 steps/sec = 10 rot/sec
 			    2500 => 100 steps/sec  = 0.5 rot/sec */
 
-			if (hw_execute(0) || hw_set_speed(125 + (100.0 - currentSpeed) * 23.75))
+			if (hw_execute(0) || //hw_set_speed(125 + (100.0 - currentSpeed) * 23.75))
+			    hw_set_speed(1000))
 				SpeedNP.s = IPS_ALERT;
 			else
 				SpeedNP.s = IPS_OK;
@@ -349,10 +340,14 @@ bool TinyFocuser::ISNewNumber (const char *dev, const char *name, double values[
 
 			Abort();
 
-			if (hw_set_positions(currentEncoder, currentEncoder))
+			if (hw_set_positions(EncoderN[0].value, EncoderN[0].value))
 				EncoderNP.s = IPS_ALERT;
-			else
+			else {
 				EncoderNP.s = IPS_OK;
+
+				FocusAbsPosN[0].value = EncoderN[0].value;
+				IDSetNumber(&FocusAbsPosNP, NULL);
+			}
 
 			IDSetNumber(&EncoderNP, NULL);
 			return true;
@@ -364,12 +359,27 @@ bool TinyFocuser::ISNewNumber (const char *dev, const char *name, double values[
 
 bool TinyFocuser::ISNewSwitch (const char *dev, const char *name, ISState *states, char *names[], int n)
 {
+	int stepping;
+
 	if (!strcmp(dev, getDeviceName())) {
 		if (!strcmp(name, SteppingSP.name)) {
+			IUResetSwitch(&SteppingSP);
 			if (IUUpdateSwitch(&SteppingSP, states, names, n) < 0)
 				return false;
 
-			if (hw_execute(0) || hw_set_stepping(currentStepping))
+			stepping = STEPPING_FULL_TWOPHASE;
+
+			if (SteppingS[0].s == ISS_ON)
+				stepping = STEPPING_FULL_ONEPHASE;
+
+			if (SteppingS[1].s == ISS_ON)
+				stepping = STEPPING_FULL_TWOPHASE;
+
+			if (SteppingS[2].s == ISS_ON)
+				stepping = STEPPING_HALF;
+
+
+			if (hw_execute(0) || hw_set_stepping(stepping))
 				SteppingSP.s = IPS_ALERT;
 			else
 				SteppingSP.s = IPS_OK;
@@ -388,23 +398,31 @@ void TinyFocuser::TimerHit()
 	if (!isConnected())
 		return;
 
-	DEBUG(INDI::Logger::DBG_DEBUG, "TimerHit!");
+	if (updateTemperature() && fabs(lastTemp - TemperatureN[0].value) > 0.25) {
+		lastTemp = TemperatureN[0].value;
+		IDSetNumber(&TemperatureNP, NULL);
+	}
 
-	updateFocuserData();
+	if (updatePosition() && fabs(lastPos - FocusAbsPosN[0].value) > 5) {
+		lastPos = FocusAbsPosN[0].value;
+		IDSetNumber(&FocusAbsPosNP, NULL);
+	}
+
+	if (FocusAbsPosNP.s == IPS_BUSY || FocusRelPosNP.s == IPS_BUSY) {
+		if (targetPos == FocusAbsPosN[0].value) {
+			FocusAbsPosNP.s = IPS_IDLE;
+			FocusRelPosNP.s = IPS_IDLE;
+
+			IDSetNumber(&FocusAbsPosNP, NULL);
+			IDSetNumber(&FocusRelPosNP, NULL);
+
+			lastPos = FocusAbsPosN[0].value;
+		}
+	}
 
 	SetTimer(POLLMS);
 }
 
-
-int TinyFocuser::hw_get_version()
-{
-	unsigned char data[1];
-
-	if (!handle || (libusb_control_transfer(handle, REQUEST_READ, CMD_GET_VERSION, 0, 0, data, 1, 0) != 1))
-		return -1;
-
-	return data[0];
-}
 
 int TinyFocuser::hw_get_temperature(double *temp)
 {
@@ -417,6 +435,8 @@ int TinyFocuser::hw_get_temperature(double *temp)
 
 	//       x.u16 = le16toh(x.u16);
 	//       *temperature = x.i16 / 16.0;
+
+	*temp = 10.42;
 
 
 	return 0;
@@ -476,7 +496,6 @@ int TinyFocuser::hw_set_pwm(int hold, int move)
 int TinyFocuser::hw_set_speed(int speed)
 {
 	// OCR1A = rq->wValue.word;
-
 	if (!handle || (libusb_control_transfer(handle, REQUEST_WRITE, CMD_SET_SPEED, htole16(speed), 0, NULL, 0, 0) != 0))
 		return -1;
 
@@ -486,8 +505,7 @@ int TinyFocuser::hw_set_speed(int speed)
 int TinyFocuser::hw_set_stepping(int mode)
 {
 	// switch (rq->wValue.bytes[0]) {
-
-	if (!handle || (libusb_control_transfer(handle, REQUEST_WRITE, CMD_SET_SPEED, (mode & 0x03), 0, NULL, 0, 0) != 0))
+	if (!handle || (libusb_control_transfer(handle, REQUEST_WRITE, CMD_SET_STEPPING, (mode & 0x03), 0, NULL, 0, 0) != 0))
 		return -1;
 
 	return 0;

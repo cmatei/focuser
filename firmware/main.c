@@ -40,23 +40,9 @@ PROGMEM const uint8_t phases_halfstep[8] = {
 	(1 << COIL_1A) | (0 << COIL_1B) | (0 << COIL_2A) | (1 << COIL_2B),
 };
 
-/* wave drive, or single phase on */
-#define DEFAULT_PWM_MOVE 255
-#define DEFAULT_PWM_HOLD 0
-
-static const uint8_t *motor_phases = phases_fullstep_wave;
-static uint8_t num_phases = 4;
-
-static uint8_t move_power = DEFAULT_PWM_MOVE;
-static uint8_t hold_power = DEFAULT_PWM_HOLD;
-
-
 /* steps per second */
 #define STEP_HZ 250
 #define TICKS_PER_STEP ((F_CPU / 64) / STEP_HZ)
-
-/* in miliseconds */
-#define POWER_CHANGE_DELAY 10
 
 static uint16_t positions[2] = { 32768, 32768 };
 #define motor_encoder (positions[0])
@@ -64,15 +50,27 @@ static uint16_t positions[2] = { 32768, 32768 };
 
 uint8_t temperature[2];
 
-static uint8_t version = TINYFOCUSER_VERSION;
+/* in miliseconds */
+#define POWER_CHANGE_DELAY 10
 
+#define DEFAULT_PWM_MOVE 255
+#define DEFAULT_PWM_HOLD 0
+
+static uint8_t move_power = DEFAULT_PWM_MOVE;
+static uint8_t hold_power = DEFAULT_PWM_HOLD;
+
+/* wave drive, or single phase on */
+static const uint8_t *motor_phases = phases_fullstep_wave;
+static uint8_t num_phases = 4;
 
 /* http://www.nongnu.org/avr-libc/user-manual/FAQ.html#faq_regbind */
 register uint8_t execute   asm("r2");
 register uint8_t moving    asm("r3");
-register uint8_t direction asm("r4");
 
+register int8_t direction asm("r4"); // signed!!
 register uint8_t current_phase asm("r5");
+
+static uint8_t version = TINYFOCUSER_VERSION;
 
 usbMsgLen_t usbFunctionSetup(uchar data[8])
 {
@@ -89,11 +87,13 @@ usbMsgLen_t usbFunctionSetup(uchar data[8])
 
 	case CMD_SET_SPEED:
 		OCR1A = rq->wValue.word;
+		execute = 0;
 		break;
 
 	case CMD_SET_PWM:
 		move_power = rq->wValue.bytes[0];
 		hold_power = rq->wValue.bytes[1];
+		execute = 0;
 		break;
 
 	case CMD_SET_STEPPING:
@@ -106,15 +106,15 @@ usbMsgLen_t usbFunctionSetup(uchar data[8])
 			motor_phases = phases_halfstep;
 			num_phases = 8;
 			break;
-		case 0:
+		// case 0:
 		default:
 			motor_phases = phases_fullstep_wave;
 			num_phases = 4;
 			break;
 		}
 
-		execute = 0;
 		current_phase = 0;
+		execute = 0;
 		break;
 
 	case CMD_GET_POSITIONS:
@@ -144,16 +144,8 @@ ISR (TIMER1_COMPA_vect, ISR_NOBLOCK)
 	if (!execute || !moving || (motor_encoder == motor_target))
 		return;
 
-	if (direction) {
-		motor_encoder++;
-		current_phase++;
-	} else {
-		motor_encoder--;
-		current_phase--;
-	}
-
-	if (current_phase >= num_phases)
-		current_phase = 0;
+	motor_encoder += direction;
+	current_phase = (current_phase + direction) & (num_phases - 1);
 
 	PORTB = pgm_read_byte_near(motor_phases + current_phase);
 }
@@ -200,6 +192,7 @@ int main()
 		usbPoll();
 		ds1820_state_machine();
 
+		/* set hold power when commanded off, or motor reached target */
 		if (!execute || (motor_encoder == motor_target)) {
 			moving = 0;
 
@@ -209,12 +202,15 @@ int main()
 			continue;
 		}
 
-		direction = (motor_encoder < motor_target);
+		/* set move power when not moving, execute is on, motor not at target */
+		if (!moving && execute && (motor_encoder != motor_target)) {
+			direction = (motor_encoder < motor_target) ? 1 : -1;
 
-		OCR0A = move_power;
-		_delay_ms(POWER_CHANGE_DELAY);
+			OCR0A = move_power;
+			_delay_ms(POWER_CHANGE_DELAY);
 
-		moving = 1;
+			moving = 1;
+		}
 	}
 
 

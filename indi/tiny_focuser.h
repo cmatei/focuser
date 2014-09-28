@@ -1,9 +1,11 @@
 #ifndef __TINY_FOCUSER_H
 #define __TINY_FOCUSER_H
 
-#include <libindi/indifocuser.h>
-
 #include <libusb-1.0/libusb.h>
+
+#include <libindi/defaultdevice.h>
+#include <libindi/indifocuser.h>
+#include <libindi/indifocuserinterface.h>
 
 class TinyFocuser : public INDI::Focuser
 {
@@ -25,14 +27,15 @@ public:
 
 	bool Abort();
 	int  MoveAbs(int ticks);
-
-	// via MoveAbs by INDI::Focuser
-	//int  MoveRel(FocusDirection dir, unsigned int ticks);
+	int  MoveRel(FocusDirection dir, unsigned int ticks);
 
 	void TimerHit();
 
 private:
 	libusb_device_handle *handle;
+
+	double lastPos, targetPos;
+	double lastTemp;
 
 	INumber TemperatureN[1];
 	INumberVectorProperty TemperatureNP;
@@ -49,7 +52,10 @@ private:
 	INumber EncoderN[1];
 	INumberVectorProperty EncoderNP;
 
-	void updateFocuserData();
+	bool updateTemperature();
+	bool updatePosition();
+
+	void getCurrentParams();
 
 	// hardware stuff
 
@@ -69,13 +75,11 @@ private:
 	static const int CMD_SET_POSITIONS   = 11;		    // set encoder/target values
 	static const int CMD_EXECUTE         = 12;		    // stop/run
 	static const int CMD_SET_STEPPING    = 13;		    // set stepping mode
-	static const int CMD_GET_VERSION    = 255;		    // get version
 
 	static const int STEPPING_FULL_ONEPHASE = 0;
 	static const int STEPPING_FULL_TWOPHASE = 1;
 	static const int STEPPING_HALF          = 2;
 
-	int hw_get_version();
 	int hw_get_temperature(double *temp);
 
 	int hw_get_positions(int *current, int *target);

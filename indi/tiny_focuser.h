@@ -75,6 +75,7 @@ private:
 	static const int CMD_SET_POSITIONS   = 11;		    // set encoder/target values
 	static const int CMD_EXECUTE         = 12;		    // stop/run
 	static const int CMD_SET_STEPPING    = 13;		    // set stepping mode
+	static const int CMD_GET_VERSION     = 255;                 // version 2
 
 	static const int STEPPING_FULL_ONEPHASE = 0;
 	static const int STEPPING_FULL_TWOPHASE = 1;
@@ -90,6 +91,8 @@ private:
 	int hw_set_pwm(int hold, int move);
 	int hw_set_speed(int speed);
 	int hw_set_stepping(int mode);
+
+	int hw_get_version();
 };
 
 

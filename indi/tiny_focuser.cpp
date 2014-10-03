@@ -266,13 +266,21 @@ bool TinyFocuser::Connect()
                 if ((libusb_get_string_descriptor_ascii(handle, desc.iManufacturer, (unsigned char *) manufacturer, 32) < 0) ||
                     (libusb_get_string_descriptor_ascii(handle, desc.iProduct, (unsigned char *) product, 32) < 0)) {
                         libusb_close(handle);
+			handle = NULL;
                         continue;
                 }
 
                 if (strcmp(manufacturer, DEV_MANUFACTURER) || strcmp(product, DEV_PRODUCT)) {
                         libusb_close(handle);
+			handle = NULL;
                         continue;
                 }
+
+		if (hw_get_version() != 2) {
+			libusb_close(handle);
+			handle = NULL;
+			continue;
+		}
 
                 /* found it, keep the handle open */
 
@@ -426,18 +434,19 @@ void TinyFocuser::TimerHit()
 
 int TinyFocuser::hw_get_temperature(double *temp)
 {
-	unsigned char data[2];
+	union {
+		unsigned char data[2];
+		int16_t s16;
+	} u;
 
-	if (!handle || (libusb_control_transfer(handle, REQUEST_READ, CMD_GET_TEMPERATURE, 0, 0, data, 2, 0) != 2))
+	if (!handle || (libusb_control_transfer(handle, REQUEST_READ, CMD_GET_TEMPERATURE, 0, 0, u.data, 2, 0) != 2))
 		return -1;
 
 	// two temp bytes coming from DS1820, signed 16bit
-
 	//       x.u16 = le16toh(x.u16);
 	//       *temperature = x.i16 / 16.0;
 
-	*temp = 10.42;
-
+	*temp = le16toh(u.s16) / 16.0;
 
 	return 0;
 }
@@ -509,4 +518,14 @@ int TinyFocuser::hw_set_stepping(int mode)
 		return -1;
 
 	return 0;
+}
+
+int TinyFocuser::hw_get_version()
+{
+	unsigned char version;
+
+	if (!handle || (libusb_control_transfer(handle, REQUEST_READ, CMD_GET_VERSION, 0, 0, &version, 1, 0) != 1))
+		return -1;
+
+	return version;
 }

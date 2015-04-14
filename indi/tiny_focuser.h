@@ -3,9 +3,7 @@
 
 #include <libusb-1.0/libusb.h>
 
-#include <libindi/defaultdevice.h>
 #include <libindi/indifocuser.h>
-#include <libindi/indifocuserinterface.h>
 
 class TinyFocuser : public INDI::Focuser
 {
@@ -25,9 +23,9 @@ public:
 	bool initProperties();
 	bool updateProperties();
 
-	bool Abort();
-	int  MoveAbs(int ticks);
-	int  MoveRel(FocusDirection dir, unsigned int ticks);
+	bool AbortFocuser();
+	int  MoveAbsFocuser(int ticks);
+	int  MoveRelFocuser(FocusDirection dir, unsigned int ticks);
 
 	void TimerHit();
 

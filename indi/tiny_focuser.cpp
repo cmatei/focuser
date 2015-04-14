@@ -1,5 +1,4 @@
 
-#include <memory>
 #include <cmath>
 
 #include "tiny_focuser.h"
@@ -63,11 +62,21 @@ void ISSnoopDevice(XMLEle *root)
 
 
 TinyFocuser::TinyFocuser()
+	: INDI::Focuser ()
 {
-	handle = NULL;
-
 	// canAbsMove, canRelMove, canAbort, variableSpeed
-	setFocuserFeatures(true, true, true, false);
+	//setFocuserFeatures(true, true, true, false);
+	FocuserCapability cap = {
+		.canAbsMove = true,
+		.canRelMove = true,
+		.canAbort = true,
+		.variableSpeed = false
+	};
+
+	SetFocuserCapability(&cap);
+
+
+	handle = NULL;
 
 	lastPos = targetPos = 0;
 	lastTemp = 0.0;
@@ -123,6 +132,7 @@ bool TinyFocuser::initProperties()
 	IUFillNumber(&EncoderN[0], "MOTOR_POSITION", "Position encoder", "%.f", 0., 65535., 1., 32768.);
 	IUFillNumberVector(&EncoderNP, EncoderN, 1, getDeviceName(), "MOTOR_POSITION", "Position Encoder", OPTIONS_TAB, IP_WO, 0, IPS_IDLE);
 
+	return true;
 }
 
 bool TinyFocuser::updateProperties()
@@ -146,6 +156,8 @@ bool TinyFocuser::updateProperties()
 		deleteProperty(PWMNP.name);
 		deleteProperty(EncoderNP.name);
 	}
+
+	return true;
 }
 
 bool TinyFocuser::updateTemperature()
@@ -176,7 +188,7 @@ void TinyFocuser::getCurrentParams()
 		IDSetNumber(&FocusAbsPosNP, NULL);
 }
 
-bool TinyFocuser::Abort()
+bool TinyFocuser::AbortFocuser()
 {
 	if (hw_execute(0))
 		return false;
@@ -192,7 +204,7 @@ bool TinyFocuser::Abort()
 // -1 error
 // 0 moved
 // 1 moving
-int TinyFocuser::MoveAbs(int ticks)
+int TinyFocuser::MoveAbsFocuser(int ticks)
 {
 	targetPos = clamp_int(ticks, 0, 65535);
 
@@ -210,7 +222,7 @@ int TinyFocuser::MoveAbs(int ticks)
 	return 1;
 }
 
-int TinyFocuser::MoveRel(FocusDirection dir, unsigned int ticks)
+int TinyFocuser::MoveRelFocuser(FocusDirection dir, unsigned int ticks)
 {
 	int target;
 
@@ -224,7 +236,7 @@ int TinyFocuser::MoveRel(FocusDirection dir, unsigned int ticks)
 	FocusRelPosN[0].value = target;
 	FocusRelPosNP.s = IPS_BUSY;
 
-	return MoveAbs((int) target);
+	return MoveAbsFocuser((int) target);
 }
 
 bool TinyFocuser::Connect()
@@ -277,6 +289,7 @@ bool TinyFocuser::Connect()
                 }
 
 		if (hw_get_version() != 2) {
+			IDMessage(getDeviceName(), "Focuser not V2.");
 			libusb_close(handle);
 			handle = NULL;
 			continue;
@@ -286,6 +299,8 @@ bool TinyFocuser::Connect()
 
 		IDMessage(getDeviceName(), "Connected.");
 		SetTimer(POLLMS);
+
+		break;
         }
 
         libusb_free_device_list (devices, 1);
@@ -346,7 +361,7 @@ bool TinyFocuser::ISNewNumber (const char *dev, const char *name, double values[
 			if (IUUpdateNumber(&EncoderNP, values, names, n) < 0)
 				return false;
 
-			Abort();
+			AbortFocuser();
 
 			if (hw_set_positions(EncoderN[0].value, EncoderN[0].value))
 				EncoderNP.s = IPS_ALERT;

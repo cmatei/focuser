@@ -64,17 +64,7 @@ void ISSnoopDevice(XMLEle *root)
 TinyFocuser::TinyFocuser()
 	: INDI::Focuser ()
 {
-	// canAbsMove, canRelMove, canAbort, variableSpeed
-	//setFocuserFeatures(true, true, true, false);
-	FocuserCapability cap = {
-		.canAbsMove = true,
-		.canRelMove = true,
-		.canAbort = true,
-		.variableSpeed = false
-	};
-
-	SetFocuserCapability(&cap);
-
+	SetFocuserCapability(FOCUSER_CAN_ABS_MOVE | FOCUSER_CAN_REL_MOVE | FOCUSER_CAN_ABORT);
 
 	handle = NULL;
 
@@ -201,28 +191,30 @@ bool TinyFocuser::AbortFocuser()
 	return true;
 }
 
-// -1 error
-// 0 moved
-// 1 moving
-int TinyFocuser::MoveAbsFocuser(int ticks)
+
+/*
+  return Return IPS_OK if motion is completed and focuser reached requested position. Return IPS_BUSY if focuser started motion to requested position and is in progress.
+  Return IPS_ALERT if there is an error.
+*/
+IPState TinyFocuser::MoveAbsFocuser(uint32_t ticks)
 {
 	targetPos = clamp_int(ticks, 0, 65535);
 
 	if (hw_execute(0) || !updatePosition())
-		return -1;
+		return IPS_ALERT;
 
 	if (targetPos == FocusAbsPosN[0].value)
-		return 0;
+		return IPS_OK;
 
 	if (hw_set_positions((int) FocusAbsPosN[0].value, (int) targetPos) || hw_execute(1))
-		return -1;
+		return IPS_ALERT;
 
 	FocusAbsPosNP.s = IPS_BUSY;
 
-	return 1;
+	return IPS_BUSY;
 }
 
-int TinyFocuser::MoveRelFocuser(FocusDirection dir, unsigned int ticks)
+IPState TinyFocuser::MoveRelFocuser(FocusDirection dir, unsigned int ticks)
 {
 	int target;
 

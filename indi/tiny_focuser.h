@@ -24,8 +24,8 @@ public:
 	bool updateProperties();
 
 	bool AbortFocuser();
-	int  MoveAbsFocuser(int ticks);
-	int  MoveRelFocuser(FocusDirection dir, unsigned int ticks);
+	IPState MoveAbsFocuser(uint32_t ticks);
+	IPState MoveRelFocuser(FocusDirection dir, uint32_t ticks);
 
 	void TimerHit();
 
